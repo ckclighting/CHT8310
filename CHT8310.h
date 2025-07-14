@@ -6,10 +6,8 @@
 // PURPOSE: Arduino library for CHT8310 temperature and humidity sensor
 //     URL: https://github.com/RobTillaart/CHT8310
 //
+#include "i2c_bus.h"
 
-
-#include "Arduino.h"
-#include "Wire.h"
 
 
 #define CHT8310_LIB_VERSION              (F("0.2.0"))
@@ -34,10 +32,9 @@ class CHT8310
 {
 public:
   //  default address =  AD0 to GND.
-  CHT8310(const uint8_t address = CHT8310_DEFAULT_ADDRESS, TwoWire *wire = &Wire);
+  CHT8310(const uint8_t address = CHT8310_DEFAULT_ADDRESS);
 
-  int      begin();
-  bool     isConnected();
+  int      begin(i2c_port_t port, int sda, int scl);
   uint8_t  getAddress();
 
 
@@ -114,8 +111,9 @@ private:
 
   uint8_t  _resolution      = 13;  //  configuration register EM
 
-  TwoWire* _wire;
   uint8_t  _address         = CHT8310_DEFAULT_ADDRESS;
+  i2c_bus_handle_t bus = nullptr;
+  i2c_bus_device_handle_t device = nullptr;
 
   int      _readRegister(uint8_t reg, uint8_t * buf, uint8_t size);
   int      _writeRegister(uint8_t reg, uint8_t * buf, uint8_t size);

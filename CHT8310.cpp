@@ -7,6 +7,7 @@
 
 
 #include "CHT8310.h"
+#include <math.h>
 
 
 //  REGISTERS
@@ -30,31 +31,35 @@
 //
 // PUBLIC
 //
-CHT8310::CHT8310(const uint8_t address, TwoWire *wire)
+CHT8310::CHT8310(const uint8_t address)
 {
-  _wire    = wire;
   _address = address;
 }
 
 
-int CHT8310::begin()
+int CHT8310::begin(i2c_port_t port, int sda, int scl)
 {
   //  address = 0x40, 0x44, 0x48, 0x4C
   if ((_address != 0x40) && (_address != 0x44) && (_address != 0x48) && (_address != 0x4C))
   {
     return CHT8310_ERROR_ADDR;
   }
-  if (! isConnected()) return CHT8310_ERROR_CONNECT;
-  return CHT8310_OK;
+    i2c_config_t conf{};
+
+    conf.mode = I2C_MODE_MASTER;
+    conf.sda_io_num = sda;
+    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
+    conf.scl_io_num = scl;
+    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+    conf.master.clk_speed = 400000;
+
+    bus = i2c_bus_create(port, &conf);
+    assert(bus != nullptr);
+    device = i2c_bus_device_create(bus, _address, 0);
+    if (device == nullptr)
+        return CHT8310_ERROR_CONNECT;
+    return CHT8310_OK;
 }
-
-
-bool CHT8310::isConnected()
-{
-  _wire->beginTransmission(_address);
-  return (_wire->endTransmission() == 0);
-}
-
 
 uint8_t CHT8310::getAddress()
 {
@@ -62,73 +67,8 @@ uint8_t CHT8310::getAddress()
 }
 
 
-////////////////////////////////////////////////
-//
-//  READ THE SENSOR
-//
-int CHT8310::read()
-{
-  //  do not read too fast
-  if (millis() - _lastRead < 1000)
-  {
-    return CHT8310_ERROR_LASTREAD;
-  }
-  _lastRead = millis();
-
-  //  TEMPERATURE PART
-  uint8_t data[2] = { 0, 0 };
-  int status = _readRegister(CHT8310_REG_TEMPERATURE, &data[0], 2);
-  if (status != CHT8310_OK)
-  {
-    return status;
-  }
-
-  //  DATASHEET P13
-  int16_t tmp = (data[0] << 8 | data[1]);
-  if (_resolution == 13)
-  {
-    _temperature = (tmp >> 3) * 0.03125;
-  }
-  else  //  _resolution == 14
-  {
-    _temperature = (tmp >> 2) * 0.03125;
-  }
-  //  Handle temperature offset.
-  if (_tempOffset != 0.0) _temperature += _tempOffset;
-
-
-  //  HUMIDITY PART
-  status = _readRegister(CHT8310_REG_HUMIDITY, &data[0], 2);
-  if (status != CHT8310_OK)
-  {
-    return status;
-  }
-  //  DATASHEET P14
-  tmp = data[0] << 8 | data[1];
-  if (tmp & 0x8000)  //  test overflow bit
-  {
-    _humidity = 100.0;
-    return CHT8310_ERROR_HUMIDITY;
-  }
-  tmp &= 0x7FFF;
-  _humidity = tmp * (1.0 / 327.67);  //  == / 32767 * 100%
-  //  Handle humidity offset.
-  if (_humOffset  != 0.0)
-  {
-    _humidity += _humOffset;
-    //  handle out of range.
-    if (_humidity < 0.0)   _humidity = 0.0;
-    if (_humidity > 100.0) _humidity = 100.0;
-  }
-
-  return CHT8310_OK;
-}
-
-
 int CHT8310::readTemperature()
 {
-  _lastRead = millis();
-
   int16_t tmp = readRegister(CHT8310_REG_TEMPERATURE);
   //  DATASHEET P13
   if (_resolution == 13)
@@ -151,8 +91,6 @@ int CHT8310::readTemperature()
 
 int CHT8310::readHumidity()
 {
-  _lastRead = millis();
-
   int16_t tmp = readRegister(CHT8310_REG_HUMIDITY);
 
   //  DATASHEET P14
@@ -368,42 +306,15 @@ int CHT8310::writeRegister(uint8_t reg, uint16_t value)
 //
 int CHT8310::_readRegister(uint8_t reg, uint8_t * buf, uint8_t size)
 {
-  _wire->beginTransmission(_address);
-  _wire->write(reg);
-  int n = _wire->endTransmission();
-  if (n != 0)
-  {
-    return CHT8310_ERROR_I2C;
-  }
-
-  n = _wire->requestFrom(_address, size);
-  if (n != size)
-  {
-    return CHT8310_ERROR_I2C;
-  }
-
-  for (uint8_t i = 0; i < size; i++)
-  {
-    buf[i] = _wire->read();
-  }
-  return CHT8310_OK;
+    ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_bus_read_bytes(device, reg, size, buf));
+    return CHT8310_OK;
 }
 
 
 int CHT8310::_writeRegister(uint8_t reg, uint8_t * buf, uint8_t size)
 {
-  _wire->beginTransmission(_address);
-  _wire->write(reg);
-  for (uint8_t i = 0; i < size; i++)
-  {
-    _wire->write(buf[i]);
-  }
-  int n = _wire->endTransmission();
-  if (n != 0)
-  {
-    return CHT8310_ERROR_I2C;
-  }
-  return CHT8310_OK;
+    ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_bus_write_bytes(device, reg, size, buf));
+    return CHT8310_OK;
 }
 
 
